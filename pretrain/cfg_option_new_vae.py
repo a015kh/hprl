@@ -7,6 +7,7 @@ config = {
     'record_file': 'records.pkl',                   # File to save global records dictionary
     'algorithm': 'supervised',                      # current training algorithm: 'supervised', 'RL', 'supervisedRL', 'debug', 'output_dataset_split'
     'mode': 'train',                                # 'train', 'eval'
+    "num_envs" : 16,                                # number of parallel environments to test
 
     'do_supervised': True,                          # do supervised training in supervisedRL algorithm if set True
     'do_RL': True,                                  # do RL training in supervisedRL algorithm if set True

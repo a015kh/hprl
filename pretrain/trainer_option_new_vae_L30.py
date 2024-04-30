@@ -342,6 +342,7 @@ def run(config, logger):
         model.train()
     elif config['algorithm'] == 'PPO_option':
         model.train()
+        model.eval()
     elif config['algorithm'] == 'SAC_option':
         model.train()
     elif config['algorithm'] == 'debug':
@@ -392,6 +393,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # FIXME: This is only for backwards compatibility to old parser, should be removed once we change the original
+    # base output directory, store cross seed results
+    outdir = args.outdir
     args.outdir = os.path.join(args.outdir, '%s-%s-%s-%s' % (args.prefix, args.grammar, args.seed, time.strftime("%Y%m%d-%H%M%S")))
     log_dir = os.path.expanduser(os.path.join(args.outdir, 'openai'))
     eval_log_dir = log_dir + "_eval"
@@ -410,6 +413,7 @@ if __name__ == "__main__":
 
     config = customargparse.args_to_dict(args)
     config['args'] = args
+    config['search_record'] = outdir
 
     _temp(config, args)
 
