@@ -221,11 +221,6 @@ class PPOModel(object):
         record_directory = config["search_record"]
         os.makedirs(record_directory, exist_ok=True)
         record_file = os.path.join(record_directory, "hprl_record.json")
-        try:
-            with open(record_file, "r") as f:
-                self.record = json.load(f)
-        except FileNotFoundError:
-            self.record = {}
         self.record_file = record_file
         self.local_record_file = os.path.join(config["outdir"], "hprl_record.json")
 
@@ -541,6 +536,11 @@ class PPOModel(object):
         seed = str(self.config["seed"])
         num = len(eval_loader) * self.config["num_envs"]
         task = self.config["env_task"]
+        try:
+            with open(self.record_file, "r") as f:
+                self.record = json.load(f)
+        except FileNotFoundError:
+            self.record = {}
         self.record[task] = self.record.get(task, {})
         self.record[task][seed] = {
             "best_reward": max_reward,
