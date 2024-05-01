@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
 
 from rl import utils
 from rl.envs import make_vec_envs
@@ -25,13 +26,36 @@ from ppo_iko.storage_option import RolloutStorage
 
 from pretrain.models_option_new_vae import ProgramVAE
 from karel_env import karel_option as karel
-from karel_env.dsl import get_DSL_option_v2
+from karel_env.dsl import get_DSL_option_v2, DSLProb_option_v2
 import ipdb
 from tqdm.auto import tqdm
 import json
+from typing import List
+from torch.nn.utils.rnn import pad_sequence
+from functools import partial
 
 DEF_TOKEN = "DEF run m( "
 END_TOKEN = " m)"
+
+
+class ProgramEvalDataset(Dataset):
+    def __init__(self, programs: List[str], dsl: DSLProb_option_v2) -> None:
+        super().__init__()
+        self.programs = programs
+        self.dsl = dsl
+
+    def __len__(self):
+        return len(self.programs)
+    
+    def __getitem__(self, idx):
+        program = self.programs[idx].strip()
+        program_tokens = torch.from_numpy(
+            np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
+        )
+        return program_tokens
+
+def program_collate_fn(batch, padding_value=0):
+    return pad_sequence(batch, batch_first=True, padding_value=padding_value)
 
 
 class PPOModel(object):
@@ -174,6 +198,8 @@ class PPOModel(object):
         self.episode_s_h = deque(maxlen=10)
 
         # TODO: Add episodic program logging
+        # ipdb.set_trace()
+        config["args"].max_episode_steps = 1
         self.all_episode_programs = []
         self.test_envs = make_vec_envs(
             cfg_envs["executable"]["name"],
@@ -201,17 +227,17 @@ class PPOModel(object):
         except FileNotFoundError:
             self.record = {}
         self.record_file = record_file
+        self.local_record_file = os.path.join(config["outdir"], "hprl_record.json")
 
     def post_process_program(self, programs):
-        concatenated_program = [DEF_TOKEN]
+        concatenated_program = []
         for program in programs:
             if program == "__prev_invalid__":
                 continue
             concatenated_program.append(
                 program.replace(DEF_TOKEN, "").replace(END_TOKEN, "")
             )
-        concatenated_program.append(END_TOKEN)
-        concatenated_program = " ".join(concatenated_program)
+        concatenated_program = DEF_TOKEN + " ".join(concatenated_program) + END_TOKEN
         return concatenated_program
 
     def save_gif(self, path, s_h):
@@ -429,7 +455,7 @@ class PPOModel(object):
                         np.median(self.episode_primitive_len),
                     )
                 )
-                ipdb.set_trace()
+
 
             # Add logs to TB
             self.writer.add_scalar(
@@ -464,30 +490,56 @@ class PPOModel(object):
 
         self.program_log_file.close()
 
+    def program_to_action(self, program):
+        program_tokens = torch.from_numpy(
+                np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
+            )
+        action = torch.unsqueeze(program_tokens, 0).repeat(self.config["num_envs"], 1).to(self.device)
+        return action
+
+    @torch.no_grad()
     def eval(self):
         with open(os.path.join(self.config["outdir"], "program_log.txt"), "r") as f:
             programs = f.readlines()
+
+        eval_dataset = ProgramEvalDataset(programs, self.dsl)
+        eval_loader = DataLoader(
+            eval_dataset,
+            batch_size=self.config["num_envs"],
+            shuffle=False,
+            collate_fn=partial(program_collate_fn, padding_value=len(self.dsl.token2int)),
+            drop_last=True,
+        )
+        # drop last is important to avoid the last batch with different size of envs
+        # this drop should be extra careful when counting the number of programs
+
         max_reward = -np.inf
         record = {}
-        program_record = []
+        program_record = {}
         best_program = ""
-        for i, program in tqdm(enumerate(programs)):
-            program = program.strip()
-            program_tokens = torch.from_numpy(
-                np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
-            )
-            self.test_envs.reset()
-            action = torch.unsqueeze(program_tokens, 0).repeat(self.config["num_envs"], 1).to(self.device)
-            obs, reward, done, infos = self.test_envs.step(action)
-            reward = torch.mean(reward).item()
-            if reward > max_reward:
-                max_reward = reward
-                record[i + 1] = reward
-                program_record.append(program)
-                best_program = program
 
+        for i, batch in tqdm(enumerate(eval_loader)):
+            batch = batch.to(self.device)
+            rewards = []
+            self.test_envs.reset()
+            for _ in range(self.config["num_envs"]):
+                obs, reward, done, infos = self.test_envs.step(batch)
+                rewards.append(reward.squeeze().cpu())
+            rewards = torch.stack(rewards) / self.config["num_envs"]
+            rewards = rewards.sum(dim=0).tolist()
+            for j, reward in enumerate(rewards):
+                if reward > max_reward:
+                    max_reward = reward
+                    idx = i * self.config["num_envs"] + j
+                    best_program = programs[idx].strip()
+                    program_record[idx + 1] = best_program
+                    record[idx + 1] = reward
+
+            if max_reward >= 1.0:
+                break
+            
         seed = str(self.config["seed"])
-        num = len(programs)
+        num = len(eval_loader) * self.config["num_envs"]
         task = self.config["env_task"]
         self.record[task] = self.record.get(task, {})
         self.record[task][seed] = {
@@ -497,6 +549,9 @@ class PPOModel(object):
             "program_record": program_record,
             "num": num,
         }
+        # save record
+        with open(self.local_record_file, "w") as f:
+            json.dump(self.record, f, indent=4)
         with open(self.record_file, "w") as f:
             json.dump(self.record, f, indent=4)
 
