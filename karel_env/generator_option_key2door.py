@@ -361,28 +361,16 @@ class KarelStateGenerator(object):
         # initial karel position: karel facing east at the last row in environment
         agent_pos = (h-2, 1)
         s[agent_pos[0], agent_pos[1], 1] = True
-
-        # randomly put markers at row h-2
-        s[h-2, 1:w-1, 6] = self.rng.rand(w-2) > 1 - wall_prob
-        # NOTE: need marker in last position as the condition is to check till I reach end
-        s[h-2, w-2, 6] = True if not is_top_off else False
-        s[:, :, 5] = 1 - (np.sum(s[:, :, 6:], axis=-1) > 0) > 0
-        assert np.sum(s[:,:,5:]) == w*h
-
-        # randomly generate wall at h-3 row
-        mode = env_task_metadata.get('mode', 'train')
-        hash_info_path = env_task_metadata.get('hash_info', None)
-        if is_top_off and hash_info_path is not None:
-            train_configs = env_task_metadata.get('train_configs', 1.0)
-            test_configs = env_task_metadata.get('test_configs', 1.0)
-            hash_info = pickle.load(open(hash_info_path,"rb"))
-            assert hash_info['w'] == w and hash_info['h'] == h
-            hashtable = hash_info['table']
-            split_idx = int(len(hashtable)*train_configs) if mode == 'train' else int(len(hashtable)*test_configs)
-            hashtable = hashtable[:split_idx] if mode == 'train' else hashtable[-split_idx:]
-            key = s[h-2, 1:w-2, 6].tostring()
-            if key not in hashtable:
-                return self.generate_single_state_chain_smoker(h, w, wall_prob, env_task_metadata, is_top_off)
+        s[:, :, 5] = True
+        possible_marker_locations = [
+            [h - 2, i] for i in range(2, w - 1)
+        ]
+        self.rng.shuffle(possible_marker_locations)
+        num_markers = self.rng.randint(1, len(possible_marker_locations))
+        markers = possible_marker_locations[:num_markers]
+        for marker in markers:
+            s[marker[0], marker[1], 6] = True
+            s[marker[0], marker[1], 5] = False
 
         # generate valid agent positions
         valid_agent_pos = [(h-2, c) for c in range(1, w-1)]
@@ -421,40 +409,29 @@ class KarelStateGenerator(object):
             ['-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'],
         ]
 
-        c = 2
-        r = h - 1
-        valid_agent_pos = []
-        valid_init_pos = []
-        while r > 0 and c < w:
-            s[r, c, 4] = True
-            s[r - 1, c, 4] = True
-            if r - 1 > 0 and c - 1 > 0:
-                valid_agent_pos.append((r - 1, c - 1))
-                valid_init_pos.append((r - 1, c - 1))
-                assert not s[r - 1, c - 1, 4] , "there shouldn't be a wall at {}, {}".format(r - 1, c - 1)
-            if r - 2 > 0 and c - 1 > 0:
-                valid_agent_pos.append((r - 2, c - 1))
-                assert not s[r - 2, c - 1, 4], "there shouldn't be a wall at {}, {}".format(r - 2, c - 1)
-            if r - 2 > 0 and c > 0:
-                valid_agent_pos.append((r - 2, c))
-                valid_init_pos.append((r - 2, c))
-                assert not s[r - 2, c, 4], "there shouldn't be a wall at {}, {}".format(r - 2, c)
-            c += 1
-            r -= 1
+        for i in range(1, h - 2):
+            s[h - i - 1, i + 1: 4] = True
+            s[h - i - 1, i + 2: 4] = True
+        
+        on_stair_positions = [
+            (h - i - 1, i) for i in range(1, w - 1)
+        ]
+        
+        one_block_above_stair_positions = [
+            (h - i - 2, i) for i in range(1, w - 2)
+        ]
 
-        agent_valid_positions = list(set(valid_agent_pos))
-        valid_init_pos = sorted(list(set(valid_init_pos)), key=lambda x: x[1])
+        agent_valid_positions = on_stair_positions + one_block_above_stair_positions
 
         # Karel initial location
-        l1, l2 = 0, 0
-        while l1 == l2:
-            l1, l2 = self.rng.randint(0, len(valid_init_pos)), self.rng.randint(0, len(valid_init_pos))
-        agent_idx, marker_idx = min(l1, l2), max(l1, l2)
-        agent_pos, marker_pos = valid_init_pos[agent_idx], valid_init_pos[marker_idx]
-        assert (not s[agent_pos[0], agent_pos[1], 4]) and not (s[marker_pos[0], marker_pos[1], 4])
+        initial_position_index = self.rng.randint(0, len(on_stair_positions) - 1)
+        agent_pos = on_stair_positions[initial_position_index]
         s[agent_pos[0], agent_pos[1], 1] = True
 
+        
         # Marker: num of max marker == 1 for now
+        marker_position_index = self.rng.randint(initial_position_index + 1, len(on_stair_positions))
+        marker_pos = on_stair_positions[marker_position_index]
         s[:, :, 5] = True
         s[marker_pos[0], marker_pos[1], 5] = False
         s[marker_pos[0], marker_pos[1], 6] = True
