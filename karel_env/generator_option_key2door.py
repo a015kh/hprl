@@ -14,6 +14,7 @@ from dsl import get_DSL_option_v2
 from dsl.dsl_parse_and_trace import parse_and_trace
 from util import log
 
+from math import ceil
 import karel_option
 
 def common_length(seq1, seq2):
@@ -144,7 +145,7 @@ class KarelStateGenerator(object):
         ]
 
         assert h == 14 and w == 22, 'karel cleanHouse environment should be 14 x 22, found {} x {}'.format(h, w)
-        s = np.zeros([h, w, len(karel_option.state_table)]) > 0
+        s = np.zeros([h, w, len(karel_option.state_table)], dtype=bool)
         # Wall
         s[0, :, 4] = True
         s[h - 1, :, 4] = True
@@ -155,13 +156,13 @@ class KarelStateGenerator(object):
         agent_pos = (1, 13)
         hardcoded_invalid_marker_locations = [(1, 13), (2, 12), (3, 10), (4, 11), (5, 11), (6, 10)]
         s[agent_pos[0], agent_pos[1], 2] = True
-
+        s[:, :, 5] = True
 
         for y1 in range(h):
             for x1 in range(w):
                 s[y1, x1, 4] = world_map[y1][x1] == '-'
-                s[y1, x1, 5] = True if world_map[y1][x1] != 'M' else False
-                s[y1, x1, 6] = True if world_map[y1][x1] == 'M' else False
+                
+                
 
         expected_marker_positions = set()
         for y1 in range(h):
@@ -172,23 +173,19 @@ class KarelStateGenerator(object):
                     if x1 - 1 > 0 and not s[y1, x1 - 1, 4]: expected_marker_positions.add((y1,x1 - 1))
                     if x1 + 1 < 13 - 1 and not s[y1, x1 + 1, 4]: expected_marker_positions.add((y1,x1 + 1))
 
-        # put 2 markers near start point for end condition
+        # put 1 marker near start point for end condition
         s[agent_pos[0]+1, agent_pos[1]-1, 5] = False
-        s[agent_pos[0]+1, agent_pos[1]-1, 7] = True
+        s[agent_pos[0]+1, agent_pos[1]-1, 6] = True
 
         # place 10 Markers
-        expected_marker_positions = list(expected_marker_positions)
-        random.shuffle(expected_marker_positions)
-        assert len(expected_marker_positions) >= 10
+        possible_marker_locations = list(expected_marker_positions - hardcoded_invalid_marker_locations)
+        self.rng.shuffle(possible_marker_locations)
+        
         marker_positions = []
-        for i, mpos in enumerate(expected_marker_positions):
-            if mpos in hardcoded_invalid_marker_locations:
-                continue
+        for mpos in possible_marker_locations[:10]:
             s[mpos[0], mpos[1], 5] = False
             s[mpos[0], mpos[1], 6] = True
             marker_positions.append(mpos)
-            if len(marker_positions) == 10:
-                break
 
         metadata = {'agent_valid_positions': None, 'expected_marker_positions': expected_marker_positions, 'marker_positions': marker_positions}
 
@@ -218,8 +215,9 @@ class KarelStateGenerator(object):
         s[:, w-1, 4] = True
 
         # initial karel position: karel facing east at the last row in environment
-        agent_pos = (h-2, 1)
+        agent_pos = (h-2, self.rng.randint(1, w-2))
         s[agent_pos[0], agent_pos[1], 1] = True
+        s[:, :, 5] = np.sum(s[:, :, 6:], axis=-1) == 0
 
         # put 1 marker at every location in grid
         if marker_prob == 1.0:
@@ -278,7 +276,7 @@ class KarelStateGenerator(object):
         while len(stack) > 0:
             cur_pos = stack.pop()
             neighbor_list = get_neighbors(cur_pos, h, w)
-            random.shuffle(neighbor_list)
+            self.rng.shuffle(neighbor_list)
             for neighbor in neighbor_list:
                 if not visited[neighbor[0], neighbor[1]]:
                     stack.append(cur_pos)
@@ -331,14 +329,9 @@ class KarelStateGenerator(object):
         s[:, 0, 4] = True
         s[:, w-1, 4] = True
         
-        
-        #agent_direction = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
-        init_pos = [(h-3, w-2), (h-2, 2), (2, 1), (1, w-3)]
-        init_dir = [[0, 1, 2, 3], [2, 3, 0, 1]]
-        init_idx = random.randint(0, 3)
-        init_dir_idx = random.randint(0, 1)
-        agent_pos = init_pos[init_idx]
-        s[agent_pos[0], agent_pos[1], init_dir[init_dir_idx][init_idx]] = True
+        agent_pos = (h-2, self.rng.randint(2, w-2))
+        s[agent_pos[0], agent_pos[1], 1] = True
+        s[:, :, 5] = True
 
         metadata = {}
 
@@ -592,9 +585,11 @@ class KarelStateGenerator(object):
 
         # initial karel position: karel facing east at the last row in environment
         #agent_pos = (h-2, 1)
-        agent_pos = np.random.randint(1, h-1, size=[2])
+        agent_pos = self.rng.randint(1, h-1, size=[2])
         agent_dir = 1
         s[agent_pos[0], agent_pos[1], agent_dir] = True
+
+        s[:, :, 5] = True # no marker
 
         metadata = {}
 
@@ -613,17 +608,6 @@ class KarelStateGenerator(object):
         :param wall_prob:
         :return:
         """
-
-        # world_map = [
-        #     ['-', '-', '-', '-', '-', '-', '-', '-'],
-        #     ['-',   0,   0,   0, '-',   0,   0, '-'],
-        #     ['-',   0,   0,   0, '-',   0,   0, '-'],
-        #     ['-',   0,   0,   0, '-',   0,   0, '-'],
-        #     ['-',   0,   0,   0, '-',   0,   0, '-'],
-        #     ['-',   0, 'M',   0, '-',   0,   0, '-'],
-        #     ['-',   0,   0,   0, '-',   0, 'M', '-'],
-        #     ['-', '-', '-', '-', '-', '-', '-', '-'],
-        # ]
         world_map = [
             ['-', '-', '-', '-', '-', '-', '-', '-'],
             ['-',   0,   0,   0, '-',   0,   0, '-'],
@@ -635,27 +619,42 @@ class KarelStateGenerator(object):
             ['-', '-', '-', '-', '-', '-', '-', '-'],
         ]
 
-        s = np.zeros([h, w, len(karel_option.state_table)]) > 0
-        init_pos = (np.random.randint(1, h-1), np.random.randint(1, 4))
-        key = (np.random.randint(1, h-1), np.random.randint(1, 4))
-        target = (np.random.randint(1, h-1), np.random.randint(5, h-1))
-        world_map[key[0]][key[1]] = 'M'
-        world_map[target[0]][target[1]] = 'M' 
-        # init_pos = (1,1)
-        door_pos = [(2,4), (3,4)]
+        s = np.zeros([h, w, len(karel_option.state_table)], dtype=bool)
+        # Wall
+        s[0, :, 4] = True
+        s[h - 1, :, 4] = True
+        s[:, 0, 4] = True
+        s[:, w - 1, 4] = True
 
-        for y1 in range(h):
-            for x1 in range(w):
-                s[y1, x1, 4] = world_map[y1][x1] == '-'
-                s[y1, x1, 5] = True if world_map[y1][x1] != 'M' else False
-                s[y1, x1, 6] = True if world_map[y1][x1] == 'M' else False
+        wall_column = ceil(w/2)
+        s[:, wall_column, 4] = True
+
+        # put 0 markers everywhere but 2 location        
+        key = (self.rng.randint(1, h-1), self.rng.randint(1, wall_column))
+        target = (self.rng.randint(1, h-1), self.rng.randint(wall_column + 1, h-1))
+
+        s[:, :, 5] = True
+        s[key[0], key[1], 6] = True
+        s[key[0], key[1], 5] = False
+        s[target[0], target[1], 6] = True
+        s[target[0], target[1], 5] = False
+
+        door_pos = [(2, wall_column), (3, wall_column)]
 
         # init karel agent position
-        agent_pos = init_pos
+        valid_loc = False
+        while (not valid_loc):
+            y_agent = self.rng.randint(1, h - 1)
+            x_agent = self.rng.randint(1, wall_column)
+            if not s[y_agent, x_agent, 6]: # agent can't be on key
+                valid_loc = True
+                s[y_agent, x_agent, 1] = True
+                agent_pos = (y_agent, x_agent)
+
+        
         s[agent_pos[0], agent_pos[1], 1] = True
 
-        # put 0 markers everywhere but 2 location
-        #s[:, :, 5] = 1 - (np.sum(s[:, :, 6:], axis=-1) > 0) > 0
+    
         assert np.sum(s[:, :, 6]) == 2
         metadata = {'agent_valid_positions': None, 'door_positions': door_pos, 'key': key, 'target': target}
 
@@ -692,9 +691,10 @@ class KarelStateGenerator(object):
         #        ]
 
         # initial karel position: karel facing east at the last row in environment
-        agent_pos = (h-2, 1)
+        agent_pos = (self.rng.randint(1, h - 1), self.rng.randint(2, w - 2))
         s[agent_pos[0], agent_pos[1], 1] = True
         
+        s[:, :, 5] = True
         # agent_pos = np.random.randint(1, h-1, size=[2])
         # agent_dir = np.random.randint(0, 4, size=[1])
         # s[agent_pos[0], agent_pos[1], agent_dir[0]] = True
@@ -702,6 +702,7 @@ class KarelStateGenerator(object):
         # place marker
         for m in existing_marker:
             s[m[0], m[1], 6] = True
+            s[m[0], m[1], 5] = False
 
         metadata = {'existing_marker': existing_marker}
 
@@ -727,28 +728,39 @@ class KarelStateGenerator(object):
         s[:, w-1, 4] = True
 
         # initial karel position: karel facing east at the first row in environment
-        agent_pos = (1, 3)
-        agent_dir = 1
-        s[agent_pos[0], agent_pos[1], agent_dir] = True
+        agent_pos = (self.rng.randint(1, h - 1), self.rng.randint(2, w - 2))
+        s[agent_pos[0], agent_pos[1], 1] = True
+        s[:, :, 5] = True
 
         # add initial body of the snake
-        s[1, 1, 7] = True
-        s[1, 2, 7] = True
+        # s[1, 1, 7] = True
+        # s[1, 2, 7] = True
 
         # add first marker
-        s[1, 6, 6] = True
-        
-        marker_list = [
-                (6, 6), (6, 1), (1, 1), 
-                (2, 2), (2, 5), (5, 5), (5, 2), 
-                (3, 3), (5, 3), (4, 4), (6, 4), 
-                (3, 2), (1, 4), (6, 2), (2, 6),
-                (4, 1), (1, 3), (2, 1), (3, 6),
-                (4, 3), (5, 1), (2, 4), (5, 4),
-                (1, 5), (3, 5), (4, 6), (5, 6),
-                (3, 1), (4, 2), (6, 5), (2, 3),
-                (1, 2), (4, 5), (3, 4), (6, 3),
-                ]
+        valid_loc = False
+        while (not valid_loc):
+            ym = self.rng.randint(1, h - 1)
+            xm = self.rng.randint(1, w - 1)
+            if not s[ym, xm, 1]: # marker can't be on agent
+                valid_loc = True
+                s[ym, xm, 6] = True
+                s[ym, xm, 5] = False
+
+        marker_pos = (ym, xm)
+                
+        marker_list = [(i, j) for i in range(1, h-1) for j in range(1, w-1)]
+        marker_list.remove(marker_pos)
+        # marker_list = [
+        #         (6, 6), (6, 1), (1, 1), 
+        #         (2, 2), (2, 5), (5, 5), (5, 2), 
+        #         (3, 3), (5, 3), (4, 4), (6, 4), 
+        #         (3, 2), (1, 4), (6, 2), (2, 6),
+        #         (4, 1), (1, 3), (2, 1), (3, 6),
+        #         (4, 3), (5, 1), (2, 4), (5, 4),
+        #         (1, 5), (3, 5), (4, 6), (5, 6),
+        #         (3, 1), (4, 2), (6, 5), (2, 3),
+        #         (1, 2), (4, 5), (3, 4), (6, 3),
+        #         ]
         marker_pointer = 0
 
         metadata = {'marker_list': marker_list, 'marker_pointer': marker_pointer}
