@@ -4,7 +4,7 @@ import scipy
 from scipy import spatial
 from collections import deque
 from typing import Tuple
-
+import ipdb
 
 
 state_table = {
@@ -38,7 +38,7 @@ vars_table = {
 
 class Karel_world(object):
 
-    def __init__(self, s=None, make_error=True, env_task="program", task_definition='program' ,reward_diff=False, final_reward_scale=True):
+    def __init__(self, s=None, make_error=False, env_task="program", task_definition='program' ,reward_diff=False, final_reward_scale=True):
         if s is not None:
             self.set_new_state(s)
         self.make_error = make_error
@@ -50,7 +50,7 @@ class Karel_world(object):
         self.num_actions = len(action_table)
         self.elapse_step = 0
         self.progress_ratio = 0.0
-
+        self.done = False
         self.actions = {
             0: self.move,
             1: self.turn_left,
@@ -357,11 +357,11 @@ class Karel_world(object):
         h = self.h
         state = self.s_h[-1]
 
-        for c in range(1, agent_pos[1]+1):
+        for c in range(1, w-1):
             if (h-2, c) in self.metadata['not_expected_marker_positions']:
                 if state[h-2, c, 7]:
                     score += 1
-                else:
+                elif state[h-2, c, 5]:
                     self.done = True
                     return self.crash_penalty, self.done
                 
@@ -370,7 +370,9 @@ class Karel_world(object):
         reward = current_progress_ratio - self.progress_ratio
         self.progress_ratio = current_progress_ratio
         total_markers = np.sum(state[:,:,6:])
+        
         if total_markers > score + len(self.metadata['not_expected_marker_positions']):
+            
             self.done = True
             return self.crash_penalty, self.done
 
@@ -550,6 +552,7 @@ class Karel_world(object):
         h = self.h
         state = self.s_h[-1]
 
+        reward = 0.0
         total_markers = np.sum(self.s[:,:,6:])
         if self.door_locked:
             if total_markers > 2:
@@ -579,6 +582,7 @@ class Karel_world(object):
     def _get_seeder_task_reward(self, agent_pos):
         # check if already done
         if self.done:
+            
             return 0.0, self.done
 
         done = False
@@ -588,11 +592,11 @@ class Karel_world(object):
 
         # calculate total_1 marker in the state
         existing_marker_num = len(self.metadata['existing_marker'])
-        
         max_markers = (w-2)*(h-2) - existing_marker_num
        
         total_one_markers = np.sum(self.s[:,:,6])
         total_two_markers = np.sum(self.s[:,:,7])
+        
 
         if total_two_markers > 0:
             self.done = True
@@ -620,6 +624,7 @@ class Karel_world(object):
             return 0.0, self.done
  
         done = False
+        reward = 0.0
 
         # Update body and check if it reached marker
         agent_y, agent_x, d = agent_pos
@@ -650,7 +655,7 @@ class Karel_world(object):
             self.snake_body.append((agent_y, agent_x))
             if len(self.snake_body) > self.snake_len:
                 first_y, first_x = self.snake_body.pop(0)
-                self.put_marker_loc((first_y, first_x, d))
+                self.pick_marker_loc((first_y, first_x, d))
 
         reward = reward if self.env_task == 'snake' else float(done)
         self.done = self.done or done
@@ -836,24 +841,24 @@ class Karel_world(object):
 
     def pick_marker_loc(self, loc) -> Tuple[int, int, int]:
         r, c, d = loc
-        num_marker = np.sum(self.s[r, c, 5:])
+        num_marker = np.sum(self.s[r, c, 6:])
         if num_marker > 0:
             self.s[r, c, num_marker + 5] = False # pick up the marker
         else:
             if self.make_error:
                 raise RuntimeError("Failed to pick up a marker.")
-        self.s[r, c, 5] = np.sum(self.s[r, c, 5:]) > 0
+        self.s[r, c, 5] = np.sum(self.s[r, c, 6:]) == 0
         return (r, c, d)
 
     def put_marker_loc(self, loc) -> Tuple[int, int, int]:
         r, c, d = loc
-        num_marker = np.sum(self.s[r, c, 5:])
+        num_marker = np.sum(self.s[r, c, 6:])
         if num_marker < MAX_NUM_MARKER:
             self.s[r, c, num_marker + 5 + 1] = True # put down the marker
         else:
             if self.make_error:
                 raise RuntimeError("Failed to put down a marker.")
-        self.s[r, c, 5] = np.sum(self.s[r, c, 5:]) > 0
+        self.s[r, c, 5] = np.sum(self.s[r, c, 6:]) == 0
         return (r, c, d)
 
     ###################################
@@ -861,6 +866,8 @@ class Karel_world(object):
     ###################################
     # given a state and a action, return the next state
     def state_transition(self, a):
+        if self.done:
+            raise RuntimeError("Cannot take action in a terminal state.")
         a_idx = np.argmax(a)
         loc = self.actions[a_idx]()
         self.add_to_history(a_idx, loc)

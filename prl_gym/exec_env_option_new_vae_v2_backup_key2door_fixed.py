@@ -546,6 +546,7 @@ class ExecEnv_option(ExecEnv):
         self.primitive_r_h_len = 0
         assert self._world.elapse_step == self.primitive_s_h_len
         self.program_step = 0
+        self.dsl = get_DSL_option_v2(dsl_type='prob', seed=config.seed, environment=self.config.env_name)
 
     def execute_pred_program(self, program_seq):
         s_h_list = []
@@ -561,8 +562,9 @@ class ExecEnv_option(ExecEnv):
         program_str = self.dsl.intseq2str(program_seq)
         self.program_str_history.append(program_str)
 
-        exe, s_exe = parse(program_str, environment=self.config.env_name)
-        if not s_exe or not len(program_seq) > 4:
+        # exe, s_exe = parse(program_str, environment=self.config.env_name)
+        exe = self.dsl.parse(program_str)
+        if exe is None or not len(program_seq) > 4:
             #print("Invalid programs: ", program_str)
             self.program_str_history.append('__prev_invalid__')
             # TODO: log invalid pred_program ratio 
@@ -586,11 +588,13 @@ class ExecEnv_option(ExecEnv):
         else:
            
             syntax = True
-            exe, s_exe = parse(program_str, environment=self.config.env_name)
-            if not s_exe:
+            if exe is None:
                 raise RuntimeError('This should be correct')
 
-            self._world, n, s_run = exe(self._world, 0)
+            try:
+                exe(self._world)
+            except RuntimeError:
+                pass # Timeout or act after done
             # we expect to return execution traces in (input, ...., output) format for EGPS
             # if no actions were executed in environment, repeat last state and add dummy action for it
             if len(self._world.a_h) < 1 and self.config.execution_guided:

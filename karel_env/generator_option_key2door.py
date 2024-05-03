@@ -50,6 +50,9 @@ class KarelStateGenerator(object):
     def __init__(self, seed=None):
         self.rng = np.random.RandomState(seed)
 
+    def state_checker(self, state, h, w):
+        assert np.sum(state[:, :, 5:7]) == h*w
+
     def print_state(self, state=None):
         agent_direction = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
         state_2d = np.chararray(state.shape[:2])
@@ -154,7 +157,7 @@ class KarelStateGenerator(object):
 
         # Karel initial location
         agent_pos = (1, 13)
-        hardcoded_invalid_marker_locations = [(1, 13), (2, 12), (3, 10), (4, 11), (5, 11), (6, 10)]
+        hardcoded_invalid_marker_locations = {(1, 13), (2, 12), (3, 10), (4, 11), (5, 11), (6, 10)}
         s[agent_pos[0], agent_pos[1], 2] = True
         s[:, :, 5] = True
 
@@ -188,7 +191,7 @@ class KarelStateGenerator(object):
             marker_positions.append(mpos)
 
         metadata = {'agent_valid_positions': None, 'expected_marker_positions': expected_marker_positions, 'marker_positions': marker_positions}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
 
@@ -222,14 +225,16 @@ class KarelStateGenerator(object):
         # put 1 marker at every location in grid
         if marker_prob == 1.0:
             s[1:h-1, 1:w-1, 6] = True
+            s[1:h-1, 1:w-1, 5] = False
         else:
             valid_marker_pos = np.array([(r,c) for r in range(1,h-1) for c in range(1,w-1)])
             marker_pos = valid_marker_pos[np.random.choice(len(valid_marker_pos), size=int(marker_prob*len(valid_marker_pos)), replace=False)]
             for pos in marker_pos:
                 s[pos[0], pos[1], 6] = True
+                s[pos[0], pos[1], 5] = False
 
         metadata = {}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
 
@@ -307,7 +312,7 @@ class KarelStateGenerator(object):
         s[:, :, 5] = 1 - (np.sum(s[:, :, 6:], axis=-1) > 0) > 0
         assert np.sum(s[:, :, 6]) == 1
         metadata = {'agent_valid_positions': None}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     # generate an initial env for fourCorners problem
@@ -334,7 +339,7 @@ class KarelStateGenerator(object):
         s[:, :, 5] = True
 
         metadata = {}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     # generate an initial env
@@ -381,7 +386,7 @@ class KarelStateGenerator(object):
         metadata = {'agent_valid_positions':agent_valid_positions,
                     'expected_marker_positions':expected_marker_positions,
                     'not_expected_marker_positions': not_expected_marker_positions}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     # generate an initial env
@@ -410,8 +415,8 @@ class KarelStateGenerator(object):
         ]
 
         for i in range(1, h - 2):
-            s[h - i - 1, i + 1: 4] = True
-            s[h - i - 1, i + 2: 4] = True
+            s[h - i - 1, i + 1, 4] = True
+            s[h - i - 1, i + 2, 4] = True
         
         on_stair_positions = [
             (h - i - 1, i) for i in range(1, w - 1)
@@ -438,6 +443,7 @@ class KarelStateGenerator(object):
 
         assert np.sum(s[:, :, 6]) == 1
         metadata = {'agent_valid_positions': agent_valid_positions}
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     # generate an initial env for random maze key2door problem
@@ -494,7 +500,7 @@ class KarelStateGenerator(object):
         s[:, :, 5] = 1 - (np.sum(s[:, :, 6:], axis=-1) > 0) > 0
         assert np.sum(s[:, :, 6]) == 2
         metadata = {'agent_valid_positions': None}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
 
@@ -538,7 +544,7 @@ class KarelStateGenerator(object):
         s[:, :, 5] = 1 - (np.sum(s[:, :, 6:], axis=-1) > 0) > 0
         assert np.sum(s[:, :, 6]) == 2
         metadata = {'agent_valid_positions': None}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     def generate_single_state_oneStroke(self, h=8, w=8, wall_prob=0.1, env_task_metadata={}, is_top_off=False):
@@ -569,7 +575,7 @@ class KarelStateGenerator(object):
         s[:, :, 5] = True # no marker
 
         metadata = {}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     # generate an initial env doorkey problem
@@ -632,9 +638,8 @@ class KarelStateGenerator(object):
         s[agent_pos[0], agent_pos[1], 1] = True
 
     
-        assert np.sum(s[:, :, 6]) == 2
         metadata = {'agent_valid_positions': None, 'door_positions': door_pos, 'key': key, 'target': target}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     def generate_single_state_seeder(self, h=8, w=8, wall_prob=0.1, env_task_metadata={}, is_top_off=False):
@@ -682,7 +687,8 @@ class KarelStateGenerator(object):
             s[m[0], m[1], 5] = False
 
         metadata = {'existing_marker': existing_marker}
-
+        # print(np.sum(s[:, :, 5:7]))
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
     def generate_single_state_snake(self, h=8, w=8, wall_prob=0.1, env_task_metadata={}, is_top_off=False):
@@ -741,7 +747,7 @@ class KarelStateGenerator(object):
         marker_pointer = 0
 
         metadata = {'marker_list': marker_list, 'marker_pointer': marker_pointer}
-
+        self.state_checker(s, h, w)
         return s, agent_pos[0], agent_pos[1], np.sum(s[:, :, 4]), metadata
 
 

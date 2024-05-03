@@ -10,8 +10,8 @@ from functools import wraps
 
 from third_party import yacc
 
-MIN_INT = 2
-MAX_INT = 5
+MIN_INT = 1
+MAX_INT = 20
 INT_PREFIX = 'R='
 
 
@@ -29,7 +29,7 @@ class DSLBase(object):
 
         self.prodnames = self.grammar.Prodnames
         self.call_counter = [0]
-        self.max_func_call = 220
+        self.max_func_call = 3000
         self.rng = np.random.RandomState(seed)
 
         self.construct_vocab()
