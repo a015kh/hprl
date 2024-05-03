@@ -37,6 +37,19 @@ from functools import partial
 DEF_TOKEN = "DEF run m( "
 END_TOKEN = " m)"
 
+task_map = {
+    "cleanHouse": "CleanHouse",
+    "doorkey": "DoorKey",
+    "fourCorners": "FourCorners",
+    "harvester": "Harvester",
+    "oneStroke": "OneStroke",
+    "randomMaze": "MazeSparse",
+    "seeder": "Seeder",
+    "snake": "Snake",
+    "stairClimber_sparse": "StairClimberSparse",
+    "topOff": "TopOff",
+}
+
 
 class ProgramEvalDataset(Dataset):
     def __init__(self, programs: List[str], dsl: DSLProb_option_v2) -> None:
@@ -46,13 +59,14 @@ class ProgramEvalDataset(Dataset):
 
     def __len__(self):
         return len(self.programs)
-    
+
     def __getitem__(self, idx):
         program = self.programs[idx].strip()
         program_tokens = torch.from_numpy(
             np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
         )
         return program_tokens
+
 
 def program_collate_fn(batch, padding_value=0):
     return pad_sequence(batch, batch_first=True, padding_value=padding_value)
@@ -221,7 +235,9 @@ class PPOModel(object):
         record_directory = config["search_record"]
         os.makedirs(record_directory, exist_ok=True)
         record_file = os.path.join(record_directory, "hprl_record.json")
+        all_program_file = os.path.join(record_directory, "all_programs.json")
         self.record_file = record_file
+        self.all_program_file = all_program_file
         self.local_record_file = os.path.join(config["outdir"], "hprl_record.json")
 
     def post_process_program(self, programs):
@@ -451,7 +467,6 @@ class PPOModel(object):
                     )
                 )
 
-
             # Add logs to TB
             self.writer.add_scalar(
                 "train/FPS", int(total_num_steps / (end - start)), total_num_steps
@@ -483,13 +498,20 @@ class PPOModel(object):
             self.writer.add_scalar("train/value_loss", value_loss, total_num_steps)
             self.writer.add_scalar("train/action_loss", action_loss, total_num_steps)
 
+            if self.program_num >= 1000000:
+                break
+
         self.program_log_file.close()
 
     def program_to_action(self, program):
         program_tokens = torch.from_numpy(
-                np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
-            )
-        action = torch.unsqueeze(program_tokens, 0).repeat(self.config["num_envs"], 1).to(self.device)
+            np.array(self.dsl.str2intseq(program)[1:], dtype=np.int8)
+        )
+        action = (
+            torch.unsqueeze(program_tokens, 0)
+            .repeat(self.config["num_envs"], 1)
+            .to(self.device)
+        )
         return action
 
     @torch.no_grad()
@@ -497,12 +519,50 @@ class PPOModel(object):
         with open(os.path.join(self.config["outdir"], "program_log.txt"), "r") as f:
             programs = f.readlines()
 
+        try:
+            with open(self.all_program_file, "r") as f:
+                all_program_file = json.load(f)
+        except FileNotFoundError:
+            all_program_file = {}
+
+        seed = str(self.config["seed"])
+        num = len(programs)
+        task = task_map[self.config["env_task"]]
+
+        all_program_file[task] = all_program_file.get(task, {})
+        all_program_file[task][seed] = os.path.join(
+            self.config["outdir"], "program_log.txt"
+        )
+        with open(self.all_program_file, "w") as f:
+            json.dump(all_program_file, f, indent=4)
+        print(
+            f"\nSave the outside seed log file at {self.all_program_file}, program num {num}"
+        )
+
+        return
+
+    @torch.no_grad()
+    def test(self):
+
+        try:
+            with open(self.all_program_file, "r") as f:
+                all_program_file = json.load(f)
+        except FileNotFoundError:
+            return
+
+        seed = str(self.config["seed"])
+        task = task_map[self.config["env_task"]]
+
+        with open(all_program_file[task][seed], "r") as f:
+            programs = f.readlines()
         eval_dataset = ProgramEvalDataset(programs, self.dsl)
         eval_loader = DataLoader(
             eval_dataset,
             batch_size=self.config["num_envs"],
             shuffle=False,
-            collate_fn=partial(program_collate_fn, padding_value=len(self.dsl.token2int)),
+            collate_fn=partial(
+                program_collate_fn, padding_value=len(self.dsl.token2int)
+            ),
             drop_last=True,
         )
         # drop last is important to avoid the last batch with different size of envs
@@ -532,16 +592,17 @@ class PPOModel(object):
 
             if max_reward >= 1.0:
                 break
-            
-        seed = str(self.config["seed"])
+
         num = len(eval_loader) * self.config["num_envs"]
-        task = self.config["env_task"]
         try:
             with open(self.record_file, "r") as f:
                 self.record = json.load(f)
         except FileNotFoundError:
             self.record = {}
         self.record[task] = self.record.get(task, {})
+        # if seed in self.record[task] and self.record[task][seed][num] < num:
+        #     return
+
         self.record[task][seed] = {
             "best_reward": max_reward,
             "record": record,

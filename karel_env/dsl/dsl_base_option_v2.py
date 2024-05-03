@@ -10,8 +10,8 @@ from functools import wraps
 
 from third_party import yacc
 
-MIN_INT = 1
-MAX_INT = 20
+MIN_INT = 2
+MAX_INT = 5
 INT_PREFIX = 'R='
 
 

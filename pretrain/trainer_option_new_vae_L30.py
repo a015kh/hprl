@@ -267,7 +267,7 @@ def run(config, logger):
     config['dsl']['num_agent_actions'] = len(dsl.action_functions) + 1      # +1 for a no-op action, just for filling
     if config['algorithm'] == 'supervised':
         model = SupervisedModel(device, config, envs, dsl, logger, writer, global_logs, config['verbose'])
-    elif config['algorithm'] == 'PPO_option':
+    elif config['algorithm'] == 'PPO_option' or config['algorithm'] == 'PPO_option_test':
         model = PPOModel(device, config, envs, dsl, logger, writer, global_logs, config['verbose'])
     elif config['algorithm'] == 'SAC_option':
         model = SACModel(device, config, envs, dsl, logger, writer, global_logs, config['verbose'])
@@ -343,6 +343,8 @@ def run(config, logger):
     elif config['algorithm'] == 'PPO_option':
         model.train()
         model.eval()
+    elif config['algorithm'] == 'PPO_option_test':
+        model.test()
     elif config['algorithm'] == 'SAC_option':
         model.train()
     elif config['algorithm'] == 'debug':
