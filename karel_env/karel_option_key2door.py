@@ -3,9 +3,9 @@ import numpy as np
 import scipy
 from scipy import spatial
 from collections import deque
+from typing import Tuple
 
-MAX_NUM_MARKER_topoff = 2
-MAX_NUM_MARKER_general = 1
+
 
 state_table = {
     0: 'Karel facing North',
@@ -18,12 +18,21 @@ state_table = {
     7: '2 markers',
 }
 
+MAX_NUM_MARKER = len(state_table) - 6
+
 action_table = {
     0: 'Move',
     1: 'Turn left',
     2: 'Turn right',
     3: 'Pick up a marker',
     4: 'Put a marker'
+}
+
+vars_table = {
+    "crash_penalty": -1.0,
+    "door_locked": True,
+    "number_cells_visited": 0,
+    "marker_position": (1, 1),
 }
 
 
@@ -42,6 +51,28 @@ class Karel_world(object):
         self.elapse_step = 0
         self.progress_ratio = 0.0
 
+        self.actions = {
+            0: self.move,
+            1: self.turn_left,
+            2: self.turn_right,
+            3: self.pick_marker,
+            4: self.put_marker
+        }
+
+        # list all variables for linting
+        self.crash_penalty = -1.0
+        self.door_locked = True
+        self.number_cells_visited = 0
+        self.marker_position = (1, 1)
+
+        # variables for program task
+        self.set_vars()
+
+
+    def set_vars(self):
+        for var, val in vars_table.items():
+            setattr(self, var, val)
+    
     def set_new_state(self, s, metadata=None):
         self.elapse_step = 0
         self.perception_count = 0
@@ -55,8 +86,9 @@ class Karel_world(object):
         self.p_v_h = [p_v.copy()]
         self.pos_h = [tuple(self.get_location()[:2])]
         self.pos_h_set = set(self.pos_h)
-        self.snake_body = deque([(1, 1), (1, 2)])
+        self.snake_body = [tuple(self.get_location()[:2])]
         self.snake_len  = 2
+        self.set_vars()
 
         if self.task_definition != "program":
             self.r_h = []
@@ -69,11 +101,11 @@ class Karel_world(object):
             # self.stage = 0 # For key2door
             self.metadata = metadata
             self.total_markers = np.sum(s[:,:,6:])
-            if self.env_task == 'snake':
-                self.snake_marker_pointer = self.metadata['marker_pointer']
-                self.snake_marker_list = self.metadata['marker_list']
-            #print(self.snake_marker_list)
-            #print(self.snake_marker_pointer)
+            if self.env_task == "snake":
+                r, c = np.where(self.s[:, :, 6])
+                self.marker_position = (r[0], c[0])
+
+
     ###################################
     ###    Collect Demonstrations   ###
     ###################################
@@ -87,8 +119,9 @@ class Karel_world(object):
         self.p_v_h = []
         self.pos_h = [tuple(self.get_location()[:2])]
         self.pos_h_set = set(self.pos_h)
-        self.snake_body = deque([(1, 1), (1, 2)])
+        self.snake_body = []
         self.snake_len  = 2
+        self.set_vars()
 
         if self.task_definition != "program":
             self.r_h = []
@@ -131,6 +164,12 @@ class Karel_world(object):
         if self.done:
             return 0.0, self.done
 
+        total_markers = np.sum(self.s[:,:,6:])
+        # terminate if put marker
+        if total_markers > self.total_markers:
+            self.done = True
+            return self.crash_penalty, self.done
+
         done = False
         pick_marker = 0
         w = self.w
@@ -163,10 +202,12 @@ class Karel_world(object):
 
         # calculate total_1 marker in the state
         max_markers = (w-2)*(h-2)
+        total_markers = np.sum(state[:,:,6:])
+        if total_markers > self.total_markers:
+            self.done = True
+            return self.crash_penalty, self.done
 
-        assert max_markers >= self.total_markers, "max_marksers: {}, self.total_markers: {}".format(max_markers, self.total_markers)
-        
-        current_progress_ratio = (max_markers - self.total_markers) / float(max_markers)
+        current_progress_ratio = (max_markers - total_markers) / float(max_markers)
         reward = current_progress_ratio - self.progress_ratio
         self.progress_ratio = current_progress_ratio
 
@@ -222,25 +263,16 @@ class Karel_world(object):
             correct_markers += 1
         if state[1, w-2, 6]:
             correct_markers += 1
+
+        total_markers = np.sum(state[:,:,6:])
+        if total_markers > correct_markers:
+            self.done = True
+            return self.crash_penalty, self.done
         
-        self.total_markers = np.sum(self.s[:,:,6:]) 
-        assert self.total_markers >= correct_markers, "total_markers: {}, correct_markers: {}".format(self.total_markers, correct_markers)
-        #give zero reward if agent places marker anywhere else
-        incorrect_markers = self.total_markers - correct_markers
-       
         current_progress_ratio = correct_markers / 4.0
-        #if current_progress_ratio > self.progress_ratio:
-        #    reward = current_progress_ratio - self.progress_ratio
-        #    self.progress_ratio = current_progress_ratio
-            
         reward = current_progress_ratio - self.progress_ratio
         self.progress_ratio = current_progress_ratio
-
-
-        if incorrect_markers > 0 and reward > 0.0:
-            reward = 0.0
-
-        done = correct_markers == 4 or incorrect_markers > 0 
+        done = correct_markers == 4
         
         if self.env_task == 'fourCorners_sparse':
             reward = reward if done and not self.done else 0
@@ -318,7 +350,7 @@ class Karel_world(object):
         if self.done:
             return 0.0, self.done       
 
-        assert self.reward_diff
+        
         done = False
         score = 0
         w = self.w
@@ -330,23 +362,19 @@ class Karel_world(object):
                 if state[h-2, c, 7]:
                     score += 1
                 else:
-                    break
-            else:
-                assert (h-2, c) in self.metadata['expected_marker_positions']
-                if state[h-2, c, 5]:
-                    score += 1
-                else:
-                    break
+                    self.done = True
+                    return self.crash_penalty, self.done
+                
 
-        if (self.w - 2 == agent_pos[1] and self.h - 2 == agent_pos[0]) and score == w-2:
-            score += 1
-
-        current_progress_ratio = score / (w-1)
+        current_progress_ratio = score / len(self.metadata['not_expected_marker_positions'])
         reward = current_progress_ratio - self.progress_ratio
         self.progress_ratio = current_progress_ratio
+        total_markers = np.sum(state[:,:,6:])
+        if total_markers > score + len(self.metadata['not_expected_marker_positions']):
+            self.done = True
+            return self.crash_penalty, self.done
 
-        done = sum([state[pos[0], pos[1], 7] for pos in self.metadata['not_expected_marker_positions']]) == len(
-            self.metadata['not_expected_marker_positions']) and (self.w - 2 == agent_pos[1] and self.h - 2 == agent_pos[0]) and current_progress_ratio==1.0
+        done = score == len(self.metadata['not_expected_marker_positions'])
 
         reward = reward if self.env_task == 'topOff' else float(done)
         if self.env_task == 'topOff_sparse':
@@ -493,23 +521,21 @@ class Karel_world(object):
         h = self.h
         state = self.s_h[-1]
         pos_tuple = tuple(agent_pos[:2])
-        
-        is_overlap  = pos_tuple in self.pos_h_set and pos_tuple != self.pos_h[-1]
-        is_hit_wall = self.a_h[-1] == 0 and pos_tuple == self.pos_h[-1]
-        traverse_length = len(self.pos_h_set)
 
         # calculate total_1 marker in the state
-        max_markers = (w-2)*(h-2)
+        max_markers = (w-2)*(h-2) - 1
 
-        assert max_markers >= self.total_markers, "max_marksers: {}, self.total_markers: {}".format(max_markers, self.total_markers)
-        assert len(self.pos_h) >= len(self.pos_h_set), "self.pos_h:{}, self.pos_h_set: {}".format(self.pos_h, self.pos_h_set)
+        # position is logged after the reward function is called
+        prev_pos = self.pos_h[-1]
+        if pos_tuple == prev_pos:
+            reward = 0.0
+        else:
+            self.number_cells_visited += 1
+            reward = 1.0 / max_markers
+            # Place a wall where the agent was
+            self.s[prev_pos[0], prev_pos[1], 4] = True
 
-        current_progress_ratio = traverse_length / float(max_markers)
-        reward = current_progress_ratio - self.progress_ratio
-        self.progress_ratio = current_progress_ratio
-
-        done = is_overlap or is_hit_wall or traverse_length == max_markers
-
+        done = self.number_cells_visited == max_markers
         reward = reward if self.env_task == 'oneStroke' else float(done)
         self.done = self.done or done
         return reward, done
@@ -524,31 +550,28 @@ class Karel_world(object):
         h = self.h
         state = self.s_h[-1]
 
-        total_markers = np.sum(state[:,:,6:])
-        error_markers = total_markers - 2
-        score = 0
-        if state[self.metadata['key'][0], self.metadata['key'][1], 5]: # [5, 2, 5]  # [1, 3, 7]
-            score += 0.5
-        if state[self.metadata['key'][0], self.metadata['key'][1], 5] and state[self.metadata['target'][0], self.metadata['target'][1], 7]:
-            score += 0.5
-
-        # open the door if marker picked
-        if state[self.metadata['key'][0], self.metadata['key'][1], 5]:
-            for door_pos in self.metadata['door_positions']: 
-                self.s[door_pos[0], door_pos[1], 4] = False
-
-        if error_markers > 0:
-            score -= error_markers * 0.0001 # penalty
-
-        current_progress_ratio = score
-        reward = current_progress_ratio - self.progress_ratio
-        self.progress_ratio = current_progress_ratio
-
-        done = (current_progress_ratio==1.0) #or error_markers > 0 
-
-        reward = reward if self.env_task == 'doorkey' else float(done)
-        if self.env_task == 'doorkey_sparse':
-            reward = reward if done and not self.done else 0
+        total_markers = np.sum(self.s[:,:,6:])
+        if self.door_locked:
+            if total_markers > 2:
+                done = True
+                reward = self.crash_penalty
+            # Check if key has been picked up
+            elif self.s[self.metadata['key'][0], self.metadata['key'][1], 5]:
+                self.door_locked = False
+                for door_pos in self.metadata['door_positions']: 
+                    self.s[door_pos[0], door_pos[1], 4] = False
+                reward = 0.5
+        else:
+            if total_markers > 1:
+                # Check if end marker has been topped off
+                if self.s[self.metadata['target'][0], self.metadata['target'][1], 7]:
+                    reward = 0.5
+                else:
+                    reward = self.crash_penalty
+                done = True
+            elif total_markers == 0:
+                done = True
+                reward = self.crash_penalty
                 
         self.done = self.done or done
         return reward, done
@@ -570,6 +593,14 @@ class Karel_world(object):
        
         total_one_markers = np.sum(self.s[:,:,6])
         total_two_markers = np.sum(self.s[:,:,7])
+
+        if total_two_markers > 0:
+            self.done = True
+            return self.crash_penalty, self.done
+        
+        if total_one_markers < self.total_markers:
+            self.done = True
+            return self.crash_penalty, self.done
         
         score = total_one_markers - existing_marker_num # - total_two_markers * 3
 
@@ -577,7 +608,7 @@ class Karel_world(object):
         reward = current_progress_ratio - self.progress_ratio
         self.progress_ratio = current_progress_ratio
 
-        done = (total_one_markers == max_markers and total_two_markers == 0) or total_two_markers > 0
+        done = (total_one_markers == max_markers)
 
         reward = reward if self.env_task == 'seeder' else float(done)
         self.done = self.done or done
@@ -589,29 +620,44 @@ class Karel_world(object):
             return 0.0, self.done
  
         done = False
-        w = self.w
-        h = self.h
-        state = self.s_h[-1]
-        pos_tuple = tuple(agent_pos[:2])
-        
-        #is_hit_wall = self.a_h[-1] == 0 and pos_tuple == self.pos_h[-1]
-        is_hit_body = self.s[agent_pos[0], agent_pos[1], 7]
 
-        assert self.snake_len >= len(self.snake_body), "self.snake_len:{}, self.snake_body: {}".format(self.snake_len, self.snake_body)
-        
-        current_progress_ratio = (self.snake_len - 2) / 20.0 # max marker eatable: 10 (max snake length: 22)
-        #current_progress_ratio = (2.0 ** ((self.snake_len - 2) / 4.0) -1) / 31.0 # max marker eatable: 5 (max snake length: 2 + 4*5 = 22)
-        reward = current_progress_ratio - self.progress_ratio
-        self.progress_ratio = current_progress_ratio
+        # Update body and check if it reached marker
+        agent_y, agent_x, d = agent_pos
+        if (agent_y == self.marker_position[0]) and (
+            agent_x == self.marker_position[1]
+        ):
+            self.snake_len += 1
+            self.pick_marker_loc(agent_pos)
+            reward = 1 / 20
+            if self.snake_len == 20 + 2:
+                done = True
+            else:
+                valid_loc = False
+                while not valid_loc:
+                    ym = np.random.randint(1, self.h - 1)
+                    xm = np.random.randint(1, self.w - 1)
+                    if np.sum(self.s[ym, xm, :5]) <= 0 and ((ym, xm) not in self.snake_body):
+                        valid_loc = True
+                        self.put_marker_loc((ym, xm, d))
+                        self.marker_position = (ym, xm)
 
-        done = is_hit_body or current_progress_ratio >= 0.99 #is_hit_wall or current_progress_ratio >= 0.99
+        last_y, last_x = self.snake_body[-1]
+        if (agent_y, agent_x) in self.snake_body[:-1]:
+            done = True
+            reward = self.crash_penalty
+        elif agent_y != last_y or agent_x != last_x:
+            self.put_marker_loc((last_y, last_x, d))
+            self.snake_body.append((agent_y, agent_x))
+            if len(self.snake_body) > self.snake_len:
+                first_y, first_x = self.snake_body.pop(0)
+                self.put_marker_loc((first_y, first_x, d))
 
         reward = reward if self.env_task == 'snake' else float(done)
         self.done = self.done or done
         return reward, done
 
 
-    def _get_state_reward(self, agent_pos, made_error=False):
+    def _get_state_reward(self, agent_pos: Tuple[int, int, int], made_error=False):
         if self.env_task == 'cleanHouse' or self.env_task == 'cleanHouse_sparse':
             reward, done = self._get_cleanHouse_task_reward(agent_pos)
         elif self.env_task == 'harvester' or self.env_task == 'harvester_sparse':
@@ -735,116 +781,89 @@ class Karel_world(object):
         return np.array(vec)
 
     ###################################
+    ###       Action Privitives     ###
+    ###################################
+
+    def move(self) -> Tuple[int, int, int]:
+        # move
+        loc = self.get_location()
+        r, c, d = loc
+        new_r, new_c = r, c
+        if(d == 0): new_r = new_r - 1
+        if(d == 1): new_c = new_c + 1
+        if(d == 2): new_r = new_r + 1
+        if(d == 3): new_c = new_c - 1
+
+        if self.front_is_clear():
+            self.s[new_r, new_c, d] = True
+            self.s[r, c, d] = False
+            return (new_r, new_c, d)
+        else:
+            if self.make_error:
+                raise RuntimeError("Failed to move.")
+            self.s[r, c, d] = False
+            d = (d + 2) % 4 # Turn 180
+            self.s[r, c, d] = True
+            return (r, c, d)
+
+    def turn_left(self) -> Tuple[int, int, int]:
+        # turn left
+        loc = self.get_location()
+        r, c, d = loc
+        self.s[r, c, d] = False
+        d = (d - 1) % 4
+        self.s[r, c, d] = True
+        return (r, c, d)
+
+    def turn_right(self) -> Tuple[int, int, int]:
+        # turn right
+        loc = self.get_location()
+        r, c, d = loc
+        self.s[r, c, d] = False
+        d = (d + 1) % 4
+        self.s[r, c, d] = True
+        return (r, c, d)
+
+    def pick_marker(self) -> Tuple[int, int, int]:
+        # pick up a marker
+        loc = self.get_location()
+        return self.pick_marker_loc(loc)
+
+    def put_marker(self) -> Tuple[int, int, int]:
+        # put down a marker
+        loc = self.get_location()
+        return self.put_marker_loc(loc)
+
+    def pick_marker_loc(self, loc) -> Tuple[int, int, int]:
+        r, c, d = loc
+        num_marker = np.sum(self.s[r, c, 5:])
+        if num_marker > 0:
+            self.s[r, c, num_marker + 5] = False # pick up the marker
+        else:
+            if self.make_error:
+                raise RuntimeError("Failed to pick up a marker.")
+        self.s[r, c, 5] = np.sum(self.s[r, c, 5:]) > 0
+        return (r, c, d)
+
+    def put_marker_loc(self, loc) -> Tuple[int, int, int]:
+        r, c, d = loc
+        num_marker = np.sum(self.s[r, c, 5:])
+        if num_marker < MAX_NUM_MARKER:
+            self.s[r, c, num_marker + 5 + 1] = True # put down the marker
+        else:
+            if self.make_error:
+                raise RuntimeError("Failed to put down a marker.")
+        self.s[r, c, 5] = np.sum(self.s[r, c, 5:]) > 0
+        return (r, c, d)
+
+    ###################################
     ###       State Transition      ###
     ###################################
     # given a state and a action, return the next state
     def state_transition(self, a):
-        made_error = False
         a_idx = np.argmax(a)
-        loc = self.get_location()
-
-        if a_idx == 0:
-            # move
-            if self.front_is_clear():
-                front_loc = self.get_neighbor('front')
-                loc_vec = self.s[loc[0], loc[1], :4]
-                self.s[front_loc[0], front_loc[1], :4] = loc_vec
-                self.s[loc[0], loc[1], :4] = np.zeros(4) > 0
-                assert np.sum(self.s[front_loc[0], front_loc[1], :4]) > 0
- 
-                if self.env_task == "oneStroke" or self.env_task == "snake" and not self.done:
-                    self.s[loc[0], loc[1], 7]  = True # change passed grid to double marker
-                    self.s[loc[0], loc[1], 6]  = False
-                    self.s[loc[0], loc[1], 5]  = False
-                    
-                    if self.env_task == "oneStroke":
-                        self.s[loc[0], loc[1], 7]  = False
-                        self.s[loc[0], loc[1], 4]  = True # change passed grid to wall
-  
-                if self.env_task == "snake" and not self.done:
-                    if (front_loc[0], front_loc[1]) not in self.snake_body:
-                        self.snake_body.append((loc[0], loc[1]))
-                    else:
-                        self.done = True
-                        return
-                    assert len(self.snake_body) >= 2
-                    if self.s[front_loc[0], front_loc[1], 6] and self.snake_len < 22: # max snake length = 22
-                        self.snake_len += 1 # += 2
-                        self.s[front_loc[0], front_loc[1], 6] = False
-                        # generate new marker
-                        dummy_check = 0
-                        while True:
-                            #m_pos = np.random.randint(1, 7, size=[2])
-                            #if (m_pos[0], m_pos[1]) != (loc[0], loc[1]) and np.sum(self.s[m_pos[0], m_pos[1], :5]) <= 0:
-                            #    self.s[m_pos[0], m_pos[1], 6] = True
-                            #    break
-                            m_pos = self.snake_marker_list[self.snake_marker_pointer]
-                            self.snake_marker_pointer = (self.snake_marker_pointer + 1) % len(self.snake_marker_list)
-                            if np.sum(self.s[m_pos[0], m_pos[1], : ]) <= 0:
-                                self.s[m_pos[0], m_pos[1], 6] = True
-                                break
-                            dummy_check += 1
-                            if dummy_check > 50:
-                                print("snake length: ", self.snake_len)
-                                self.print_state()
-                                assert False, "no valid marker found, m_pos: {}, state at m_pos:{}".format(m_pos, self.s[m_pos[0], m_pos[1]])
- 
-                    # check if snake tail should disappear
-                    if len(self.snake_body) > self.snake_len:  
-                        tail_pos = self.snake_body.popleft()
-                        self.s[tail_pos[0], tail_pos[1], :] = np.zeros(len(state_table)) > 0
-
-                assert np.sum(self.s[front_loc[0], front_loc[1], :4]) > 0
-                next_loc = front_loc
-            else:
-                if self.make_error:
-                    raise RuntimeError("Failed to move.")
-                loc_vec = np.zeros(4) > 0
-                loc_vec[(loc[2] + 2) % 4] = True  # Turn 180
-                self.s[loc[0], loc[1], :4] = loc_vec
-                next_loc = loc
-            self.add_to_history(a_idx, next_loc)
-        elif a_idx == 1 or a_idx == 2:
-            # turn left or right
-            loc_vec = np.zeros(4) > 0
-            loc_vec[(a_idx * 2 - 3 + loc[2]) % 4] = True
-            self.s[loc[0], loc[1], :4] = loc_vec
-            self.add_to_history(a_idx, loc)
-
-        elif a_idx == 3 or a_idx == 4:
-            # pick up or put a marker
-            num_marker = np.argmax(self.s[loc[0], loc[1], 5:])
-            # just clip the num of markers for now
-            if self.env_task in [
-                    'topOff', 'topOff_sparse', 
-                    'randomMaze_key2door', 'randomMaze_key2door_sparse', 
-                    'randomMaze_key2doorSpace', 'randomMaze_key2doorSpace_sparse', 
-                    'doorkey', 'doorkey_sparse', 
-                    'seeder', 'seeder_sparse'
-                    ]:
-                new_num_marker = np.clip(a_idx*2-7 + num_marker, 0, MAX_NUM_MARKER_topoff)
-            else:
-                new_num_marker = np.clip(a_idx*2-7 + num_marker, 0, MAX_NUM_MARKER_general)
-            #new_num_marker = a_idx*2-7 + num_marker
-            #if new_num_marker < 0:
-            #    if self.make_error:
-            #        raise RuntimeError("No marker to pick up.")
-            #    else:
-            #        new_num_marker = num_marker
-            #    made_error = True
-            #elif new_num_marker > MAX_NUM_MARKER-1:
-            #    if self.make_error:
-            #        raise RuntimeError("Cannot put more marker.")
-            #    else:
-            #        new_num_marker = num_marker
-            #    made_error = True
-            marker_vec = np.zeros(MAX_NUM_MARKER_topoff+1) > 0
-            marker_vec[new_num_marker] = True
-            self.s[loc[0], loc[1], 5:] = marker_vec
-            self.add_to_history(a_idx, loc, made_error)
-        else:
-            raise RuntimeError("Invalid action")
-        return
+        loc = self.actions[a_idx]()
+        self.add_to_history(a_idx, loc)
 
     # given a karel env state, return a visulized image
     def state2image(self, s=None, grid_size=100, root_dir='./'):
