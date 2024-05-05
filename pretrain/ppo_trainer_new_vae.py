@@ -391,47 +391,47 @@ class PPOModel(object):
                     ),
                 )
 
-            if j % self.log_video_interval == 0 and j > 0:
-                print("Log Videos...")
-                video_len = [len(s_h) for s_h in self.episode_s_h]
-                print(
-                    "video len mean/min/max {}/{}/{}:",
-                    np.mean(video_len),
-                    np.min(video_len),
-                    np.max(video_len),
-                )
-                # create video log
-                log_video_dir = os.path.expanduser(
-                    os.path.join(
-                        self.config["outdir"],
-                        "PPO",
-                        "video_{}_update{}".format(self.config["env_task"], j),
-                    )
-                )
-                utils.cleanup_log_dir(log_video_dir)
-                save_video_dir_path = os.path.join(
-                    self.config["outdir"],
-                    "PPO",
-                    "video_{}_update{}".format(self.config["env_task"], j),
-                )
-                for idx, s_h in enumerate(self.episode_s_h):
-                    save_video_path = (
-                        os.path.join(
-                            save_video_dir_path,
-                            "{}_update{}_sample{}.gif".format(
-                                self.config["env_task"], j, idx
-                            ),
-                        ),
-                    )
-                    self.save_gif(save_video_path[0], s_h)
-                for s_idx, (ri, pi) in enumerate(
-                    zip(self.episode_rewards, self.episode_programs)
-                ):
-                    self.writer.add_text(
-                        "program/Num_update{}_Sample{}".format(j, s_idx),
-                        "reward_env: {} program: {} ".format(ri, pi),
-                        total_num_steps,
-                    )
+            # if j % self.log_video_interval == 0 and j > 0:
+            #     print("Log Videos...")
+            #     video_len = [len(s_h) for s_h in self.episode_s_h]
+            #     print(
+            #         "video len mean/min/max {}/{}/{}:",
+            #         np.mean(video_len),
+            #         np.min(video_len),
+            #         np.max(video_len),
+            #     )
+            #     # create video log
+            #     log_video_dir = os.path.expanduser(
+            #         os.path.join(
+            #             self.config["outdir"],
+            #             "PPO",
+            #             "video_{}_update{}".format(self.config["env_task"], j),
+            #         )
+            #     )
+            #     utils.cleanup_log_dir(log_video_dir)
+            #     save_video_dir_path = os.path.join(
+            #         self.config["outdir"],
+            #         "PPO",
+            #         "video_{}_update{}".format(self.config["env_task"], j),
+            #     )
+            #     for idx, s_h in enumerate(self.episode_s_h):
+            #         save_video_path = (
+            #             os.path.join(
+            #                 save_video_dir_path,
+            #                 "{}_update{}_sample{}.gif".format(
+            #                     self.config["env_task"], j, idx
+            #                 ),
+            #             ),
+            #         )
+            #         self.save_gif(save_video_path[0], s_h)
+            #     for s_idx, (ri, pi) in enumerate(
+            #         zip(self.episode_rewards, self.episode_programs)
+            #     ):
+            #         self.writer.add_text(
+            #             "program/Num_update{}_Sample{}".format(j, s_idx),
+            #             "reward_env: {} program: {} ".format(ri, pi),
+            #             total_num_steps,
+            #         )
 
             if j % self.log_interval == 0 and len(self.episode_rewards) > 1:
                 total_num_steps = (j + 1) * self.num_processes * self.num_steps

@@ -2,3 +2,4 @@
 _site/
 .*.sw[pon]
 __pycache__/
+debug/
