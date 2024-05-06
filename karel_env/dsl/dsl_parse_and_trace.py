@@ -33,7 +33,7 @@ rules = []
 # n: num_call
 # s: success
 # c: condition [True, False]
-MAX_FUNC_CALL = 3000
+MAX_FUNC_CALL = 2000
 
 
 def r_prog_trace(t):
