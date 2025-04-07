@@ -46,6 +46,16 @@ bash run_vae_option_L30.sh
 bash run_meta_policy_new_vae_ppo_64dim.sh
 ```
 
+### Baseline Scripts of LLM-GS
+```bash
+# The scripts are in scripts/{task}.sh
+bash scripts/cleanHouse.sh
+```
+
+Note that the task implementation of [LLM-GS](https://arxiv.org/abs/2405.16450), [HC](https://arxiv.org/abs/2410.12166), and [HPRL](https://arxiv.org/abs/2301.12950) are different. This is because the implementation in HC and HPRL have some bugs. In this repository, we follow the implementation of LLM-GS.
+
+We only record the training programs and evaluate the programs using te evaluation from [HC](https://arxiv.org/abs/2410.12166). 
+
 
 ## Cite the paper
 ```
